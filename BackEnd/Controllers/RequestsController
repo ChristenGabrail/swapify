@@ -1,0 +1,282 @@
+const express = require('express');
+const router = express.Router();
+const ExchangeRequestModel = require('../modules/RequestModel');
+const jwt = require('jsonwebtoken');
+const ItemModel = require('../modules/ItemModel');
+const asyncHandler = require('express-async-handler');
+const UserModel = require('../modules/UserModel');
+const mongoose = require('mongoose');
+const cron = require('node-cron');
+const cloudinary = require('../util/Cloudinary.js')
+
+// list all items of the user by their ID from the token
+exports.listOfferedItems = asyncHandler(async (req, res) => {
+    try {
+        const token = req.headers.token;
+        const decoded = jwt.verify(token, 'your_secret_key');
+        const userId = decoded.userId;
+
+        if (!token) {
+            return res.status(401).json({ success: false, message: 'Unauthorized: No token provided' });
+        }
+
+        // Fetch items of the user by their ID
+        const itemsList = await ItemModel.find({ user: userId , status: 'accepted'})
+
+        res.status(200).json(itemsList);
+    } catch (error) {
+        console.log(error);
+        res.status(500).json({ error: error.message });
+    }
+});
+
+
+//wait for test with the front end
+//request exchange
+exports.createExchangeRequest1 = asyncHandler(async (req, res) => {
+    try {
+        
+        const token =req.headers.token;
+        const decoded = jwt.verify(token, 'your_secret_key');
+        const RequesterId= decoded.userId;
+        const Item_offered_id = req.body.Item_offered_id;          // Extract only the ID
+        const Item_requested_id = req.body.Item_requested_id; // Extract only the ID
+
+
+      // Check if Item_offered_id is provided and it's a valid ObjectId
+if (!mongoose.Types.ObjectId.isValid(Item_offered_id)) {
+    return res.status(400).json({ error: 'Invalid Item_offered_id' });
+
+
+}
+if (!Item_requested_id) {
+    
+    return res.status(400).json({ error: 'Requested item ID is required' });
+    
+}
+// Check if Item_requested_id is provided and it's a valid ObjectId
+if (!mongoose.Types.ObjectId.isValid(Item_requested_id)) {
+    return res.status(400).json({ error: 'Invalid Item_requested_id' });
+}
+        if (!token) {
+            return res.status(401).json({ success: false, message: 'Unauthorized: No token provided' });
+        }
+
+       
+
+        // Retrieve the item using the item IDs
+        const item = await ItemModel.findById(Item_requested_id);
+        if (!item) {
+            return res.status(404).json({ error: 'Item not found' });
+        }
+
+        // Access the user associated with the item
+        const RequestedUserId = item.user;
+
+        // Create the exchange request
+        const exchangeRequest = new ExchangeRequestModel({
+            Item_requested_id: Item_requested_id,
+            requested_User_id: RequestedUserId,
+            requester_id: RequesterId,
+            Item_offered_id: Item_offered_id
+        });
+
+        const savedRequest = await exchangeRequest.save();
+        res.status(200).json(savedRequest);
+    } catch (error) {
+        console.log(error);
+        res.status(500).json({ error: error.message });
+    }
+});
+
+// Function to retrieve pending exchange requests related to the user's items by their token
+exports.getPendingExchangeRequests = asyncHandler(async (req, res) => {
+    try {
+        // Extract user ID from the token
+        const decoded = jwt.verify(req.headers.token, 'your_secret_key');
+        const userId = decoded.userId;
+
+        // Retrieve pending exchange requests related to the user's items
+        const pendingRequests = await ExchangeRequestModel.find({ requested_User_id: userId, status: 'pending' });
+
+        // Respond with the retrieved pending exchange requests
+        res.json(pendingRequests);
+    } catch (error) {
+        // Handle errors
+        res.status(500).json({ error: error.message });
+    }
+});
+
+// Function to retrieve pending exchange requests related to the user's items by their token
+exports.getAcceptedExchangeRequests = asyncHandler(async (req, res) => {
+    try {
+        // Extract user ID from the token
+        const decoded = jwt.verify(req.headers.token, 'your_secret_key');
+        const userId = decoded.userId;
+
+        // Retrieve pending exchange requests related to the user's items
+        const pendingRequests = await ExchangeRequestModel.find({ requested_User_id: userId, status: 'accepted' });
+
+        // Respond with the retrieved pending exchange requests
+        res.json(pendingRequests);
+    } catch (error) {
+        // Handle errors
+        res.status(500).json({ error: error.message });
+    }
+});
+
+
+// Function to retrieve pending exchange requests related to the user's items by their token
+exports.getRejectedExchangeRequests = asyncHandler(async (req, res) => {
+    try {
+        // Extract user ID from the token
+        const decoded = jwt.verify(req.headers.token, 'your_secret_key');
+        const userId = decoded.userId;
+
+        // Retrieve pending exchange requests related to the user's items
+        const pendingRequests = await ExchangeRequestModel.find({ requested_User_id: userId, status: 'rejected' });
+
+        // Respond with the retrieved pending exchange requests
+        res.json(pendingRequests);
+    } catch (error) {
+        // Handle errors
+        res.status(500).json({ error: error.message });
+    }
+});
+
+
+/*
+
+// Function to retrieve all exchange requests
+async function getAllExchangeRequests(req, res) {
+    try {
+        const exchangeRequests = await ExchangeRequestModel.find();
+        res.json(exchangeRequests);
+    } catch (error) {
+        res.status(500).json({ error: error.message });
+    }
+}
+
+// Function to update the status of an exchange request
+async function updateExchangeRequestStatus(req, res) {
+    try {
+        const requestId = req.params.id;
+        const { newStatus } = req.body;
+        const updatedRequest = await ExchangeRequestModel.findByIdAndUpdate(requestId, { status: newStatus }, { new: true });
+        res.json(updatedRequest);
+    } catch (error) {
+        res.status(500).json({ error: error.message });
+    }
+}
+
+// Function to delete an exchange request
+async function deleteExchangeRequest(req, res) {
+    try {
+        const requestId = req.params.id;
+        await ExchangeRequestModel.findByIdAndDelete(requestId);
+        res.json({ message: 'Exchange request deleted successfully' });
+    } catch (error) {
+        res.status(500).json({ error: error.message });
+    }
+}
+
+*/
+
+//respondToExchangeRequest
+
+exports.respondToExchangeRequest = asyncHandler(async (req, res) => {
+    try {
+        const requestId = req.params.requestId;
+        const response = req.body.response; // 'accepted' or 'rejected'
+
+        // Check if the response is valid
+        if (response !== 'accepted' && response !== 'rejected') {
+            return res.status(400).json({ error: 'Invalid response. Response must be either "accepted" or "rejected"' });
+        }
+
+        // Extract user ID from the token
+        const decoded = jwt.verify(req.headers.token, 'your_secret_key');
+        const userId = decoded.userId;
+
+        // Find the exchange request by ID
+        const exchangeRequest = await ExchangeRequestModel.findById(requestId);
+
+        // Check if the exchange request exists
+        if (!exchangeRequest) {
+            return res.status(404).json({ error: 'Exchange request not found' });
+        }
+
+        // Check if the user is authorized to respond to this request
+        if (exchangeRequest.requested_User_id.toString() !== userId) {
+            return res.status(403).json({ error: 'You are not authorized to respond to this exchange request' });
+        }
+
+        // Update the status of the exchange request based on the response
+        exchangeRequest.status = response;
+
+        // If the response is 'accepted', update the accepted_at field with the current timestamp
+        if (response === 'accepted') {
+            exchangeRequest.accepted_at = new Date();
+        }
+
+        // Save the updated exchange request
+        const updatedRequest = await exchangeRequest.save();
+
+        // If the request is accepted, mark the items as expired
+        if (response === 'accepted') {
+            // Update the status of the items to 'expired'
+            await ItemModel.updateMany(
+                { _id: { $in: [exchangeRequest.Item_offered_id, exchangeRequest.Item_requested_id] } },
+                { status: 'expired' }
+            );
+        }
+
+        res.status(200).json(updatedRequest);
+    } catch (error) {
+        console.log(error);
+        res.status(500).json({ error: error.message });
+    }
+});
+
+
+
+
+// Schedule a task to run every 10 minutes
+
+//cron.schedule('*/10 * * * *', async () => {
+   /* try {
+        console.log('Cron job running...');
+
+        // Find all accepted exchange requests with accepted_at populated
+        const acceptedRequests = await ExchangeRequestModel.find({ status: 'accepted', accepted_at: { $exists: true } });
+
+        // Iterate through each accepted request
+        for (const request of acceptedRequests) {
+            // Calculate the difference in milliseconds between the current time and the time the request was accepted
+            const currentTime = new Date();
+            const acceptedTime = request.accepted_at;
+            const millisecondsInAWeek = 7 * 24 * 60 * 60 * 1000; // One week in milliseconds
+            const millisecondsDiff = currentTime - acceptedTime;
+
+            // If the difference is more than one week, delete the items associated with the request
+            if (millisecondsDiff > millisecondsInAWeek) {
+                // Count the number of expired items
+                const expiredItemsCount = await ItemModel.countDocuments({ _id: { $in: [request.Item_offered_id, request.Item_requested_id] } });
+
+                // Delete the expired items only if there are any
+                if (expiredItemsCount > 0) {
+                    // Delete the expired items
+                    await ItemModel.deleteMany({ _id: { $in: [request.Item_offered_id, request.Item_requested_id] } });
+                
+                    // Print the message only if items were deleted
+                    console.log('Expired items deleted successfully.');
+                } else {
+                    console.log('No expired items found.');
+                }
+            }
+        }
+    } catch (error) {
+        console.error('Error deleting expired items:', error);
+    }
+});
+*/

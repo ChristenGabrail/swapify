@@ -1,0 +1,36 @@
+const mongoose = require('mongoose');
+
+// Define Category Schema
+const CategorySchema = new mongoose.Schema({
+    name: {
+        type: String,
+        required: [true,'Name Is Required'],
+        unique:[true,'This Category Is already Exist'] 
+        
+    },
+    slug: {
+        type: String,
+        lowercase: true,
+    },
+    image: {
+        public_id: {
+            type: String,
+            required: true
+        },
+        url: {
+            type: String,
+            required: true
+        }
+    
+    },
+    user: {// to know wich admin create that category
+        type: mongoose.Schema.Types.ObjectId,
+        ref: 'User', // Reference to the User model
+        required: true,
+    },
+}, { timestamps: true ,
+    createdAt: 'created_at', 
+    updatedAt: 'updated_at' });
+
+const CategoryModel = mongoose.model('Category', CategorySchema);
+module.exports = CategoryModel;

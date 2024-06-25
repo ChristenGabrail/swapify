@@ -1,0 +1,9 @@
+const express = require('express');
+const {AddMessasege  ,getAllMessage,getAllChats,sendPhotoMessage} =require('../Controllers/ChatController');
+const router=express.Router();
+router.route('/Sendmess').post(AddMessasege); 
+router.route('/getmess/:from/:to').get(getAllMessage);
+router.route('/getchats').get(getAllChats);
+
+router.route('/Sendphoto').post(sendPhotoMessage);
+module.exports=router;

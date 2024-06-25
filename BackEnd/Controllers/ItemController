@@ -1,0 +1,580 @@
+
+const itemModel = require('../modules/ItemModel');
+const UserModel = require('../modules/UserModel');
+const CategoryModel= require('../modules/CategoryModel');
+const slugify = require('slugify');
+const asyncHandler = require('express-async-handler');
+const multer = require('multer');
+const jwt = require('jsonwebtoken');
+const mongoose = require('mongoose');
+const { populate } = require('../modules/ItemModel');
+const ItemModel = require('../modules/ItemModel');
+const ExchangeRequestModel = require('../modules/RequestModel');
+const cloudinary = require('../util/Cloudinary.js')
+//Create item
+
+// Configure multer for file upload
+const storage = multer.memoryStorage(); // Use memory storage for simplicity
+const upload = multer({ storage: storage });
+
+// Middleware to handle file upload
+const uploadMiddleware = upload.single('image');
+
+exports.createItem = [uploadMiddleware, asyncHandler(async (req, res) => {
+  const { title, Description, price, category, phone, condition, status } = req.body;
+
+  // Extract token from request headers
+  const token = req.headers.token;
+
+  // Check if token exists
+  if (!token) {
+    return res.status(401).json({ success: false, message: 'Unauthorized: No token provided' });
+  }
+
+  try {
+    // Verify token
+    const decoded = jwt.verify(token, 'your_secret_key');
+    const userId = decoded.userId;
+
+    // Check if file is uploaded
+    if (!req.file) {
+      return res.status(400).json({ success: false, message: 'Image file is required' });
+    }
+
+    // Upload image to Cloudinary
+    const result = await new Promise((resolve, reject) => {
+      const stream = cloudinary.uploader.upload_stream({ folder: "Items" }, (error, result) => {
+        if (error) {
+          reject(error);
+        } else {
+          resolve(result);
+        }
+      });
+
+      stream.end(req.file.buffer);
+    });
+
+    // Create new item associated with the user identified by the token
+    const item = await itemModel.create({
+      title,
+      slug: slugify(title),
+      Description,
+      user: userId, // Associate the item with the user identified by the token
+      category,
+      price,
+      phone,
+      condition,
+      status,
+      image: {
+        public_id: result.public_id,
+        url: result.secure_url
+      }, // Save the constructed URL of the uploaded image
+    });
+
+    res.status(201).json({ success: true, data: item });
+  } catch (error) {
+    // Handle Mongoose validation errors
+    if (error instanceof mongoose.Error.ValidationError) {
+      const errors = Object.values(error.errors).map((val) => val.message);
+      return res.status(400).json({ success: false, message: errors });
+    }
+
+    console.log(error);
+    res.status(500).json({ success: false, message: 'Internal Server Error' });
+  }
+})];
+
+
+// Get all items(accepted Items ) & exclude the items of logged User
+exports.getItems = asyncHandler(async (req, res) => {
+  // Extract token from request headers
+  const token = req.headers.token;
+
+  // Check if token exists
+  if (!token) {
+    return res.status(401).json({ success: false, message: 'Unauthorized: No token provided' });
+  }
+
+  try {
+    // Verify token
+    const decoded = jwt.verify(token, 'your_secret_key');
+    const userId = decoded.userId;
+
+    // Modify the query to filter for accepted items only and exclude items from the logged-in user
+    const items = await ItemModel.find({ status: 'accepted', user: { $ne: userId } })
+      
+      .populate('category', '_id name'); // Populate the 'category' field and retrieve both '_id' and 'name'
+
+    const formattedItems = items.map(item => ({
+      _id: item._id,
+      title: item.title,
+      Description: item.Description,
+      price: item.price,
+      category: item.category._id, // Retrieve category ID
+      user: item.user,
+      condition: item.condition,
+      slug: item.slug,
+      image: item.image,
+      status: item.status,
+      createdAt: item.created_at,
+      updatedAt: item.updated_at
+    }));
+
+    res.status(200).json({  data: formattedItems });
+
+  } catch (error) {
+    // Handle JWT errors
+    if (error.name === 'JsonWebTokenError') {
+      return res.status(401).json({ success: false, message: 'Unauthorized: Invalid token' });
+    }
+
+    console.log(error);
+    res.status(500).json({ success: false, message: 'Internal Server Error' });
+  }
+});
+
+
+  //get spisific item by id
+
+exports.getItem = asyncHandler(async (req, res) => {
+    const { id } = req.params;
+    if (!mongoose.Types.ObjectId.isValid(id)) {
+        return res.status(400).json({ msg: 'Invalid ID format' });
+    }
+
+    const item = await itemModel.findById(id);
+    if (!item) {
+        return res.status(404).json({ msg: `No item found for this id ${id}` });
+    }
+    res.status(200).json({ data: item });
+});
+
+
+//to get specific item by name
+exports.getItemByName = asyncHandler(async (req, res) => {
+  const { title } = req.params;
+  
+  const item = await itemModel.findOne({ title });
+  if (!item) {
+      return res.status(404).json({ msg: `No item found with name '${title}'` });
+  }
+  res.status(200).json({ data: item });
+});
+
+//to update specific item
+
+exports.updateitem = asyncHandler(async (req, res) => {
+  const { id } = req.params;
+  const { token } = req.headers;
+  const { title, price, Description, category, condition } = req.body;
+
+  // Check if token exists
+  if (!token) {
+      return res.status(401).json({success: false, msg: 'Unauthorized: No token provided' });
+  }
+
+  try {
+      // Verify token
+      const decoded = jwt.verify(token, 'your_secret_key');
+      const userId = decoded.userId;
+
+      // Retrieve the item from the database
+      const itemToUpdate = await itemModel.findById(id);
+
+      // Check if the item exists
+      if (!itemToUpdate) {
+          return res.status(404).json({success: false, msg: `No item found for this id: ${id}` });
+      }
+
+      // Check if the user is authorized to update the item
+      if (itemToUpdate.user.toString() !== userId) {
+          return res.status(403).json({success: false, msg: 'You are not authorized to update this item' });
+      }
+
+      // Generate slug from title
+      const slug = slugify(title);
+
+      // Update the item
+      const updatedItem = await itemModel.findByIdAndUpdate(
+          id,
+          { title, slug, price, Description, category, condition },
+          { new: true }
+      );
+
+      // Check if the item was successfully updated
+      if (!updatedItem) {
+          return res.status(500).json({success: false, msg: 'Failed to update item' });
+      }
+
+      res.status(200).json({ success:true ,data: updatedItem });
+  } catch (error) {
+      console.error(error); // Log the error for debugging
+      return res.status(401).json({ success: false,msg: 'Unauthorized: Invalid token' });
+  }
+});
+
+
+// Delete specific item
+exports.deleteitem = asyncHandler(async (req, res) => {
+  const { id } = req.params;
+  const { token } = req.headers;
+
+  // Check if token exists
+  if (!token) {
+      return res.status(401).json({ success: false, msg: 'Unauthorized: No token provided' });
+  }
+
+  try {
+      // Verify token
+      const decoded = jwt.verify(token, 'your_secret_key');
+      const userId = decoded.userId;
+
+      // Retrieve the item from the database
+      const itemToDelete = await ItemModel.findById(id);
+
+      // Check if the item exists
+      if (!itemToDelete) {
+          return res.status(404).json({ success: false, msg: `No item found for this id: ${id}` });
+      }
+
+      // Check if the user is authorized to delete the item
+      if (itemToDelete.user.toString() !== userId) {
+          return res.status(403).json({ success: false, msg: 'You are not authorized to delete this item' });
+      }
+
+      // Delete the item
+      await ItemModel.findByIdAndDelete(id);
+
+      // Remove the item from the favorites array of all users
+      await UserModel.updateMany(
+        { favorites: id },
+        { $pull: { favorites: id } }
+      );
+
+      // Delete all exchange requests related to this item
+      await ExchangeRequestModel.deleteMany({
+        $or: [
+          { Item_offered_id: id },
+          { Item_requested_id: id }
+        ]
+      });
+
+      res.status(200).json({ success: true, msg: `The item with ID ${id} was successfully deleted` });
+  } catch (error) {
+      console.error('Error deleting item:', error);
+      return res.status(500).json({ success: false, msg: 'Internal Server Error' });
+  }
+});
+
+
+
+//ADD ITEM TO SAVED ITEMS
+
+exports.addToSavedItems = asyncHandler(async (req, res) => {
+  try {
+    const itemId = req.params.itemId; // Extract itemId from request parameters
+    const token = req.headers.token; // Extract token from request headers
+
+    // Check if both item ID and token are provided
+    if (!itemId || !token) {
+      return res.status(400).json({ error: 'Item ID and token are required' });
+    }
+
+    // Verify token
+    const decoded = jwt.verify(token, 'your_secret_key');
+    const userId = decoded.userId;
+
+    // Check if the item exists
+    const item = await itemModel.findById(itemId);
+    if (!item) {
+      return res.status(404).json({ error: 'Item not found' });
+    }
+
+    // Check if the user exists
+    const user = await UserModel.findById(userId);
+    if (!user) {
+      return res.status(404).json({ error: 'User not found' });
+    }
+
+    // Ensure the favorites array is initialized
+    if (!user.favorites) {
+      user.favorites = [];
+    }
+
+    // Check if the item is already in user's favorites
+    if (user.favorites.includes(itemId)) {
+      return res.status(400).json({ error: 'Item already in favorites' });
+    }
+
+    // Add the item to user's favorites
+    user.favorites.push(itemId);
+    await user.save();
+
+    res.status(200).json({ message: 'Item added to favorites successfully' });
+  } catch (error) {
+    console.error('Error adding item to favorites:', error);
+    res.status(500).json({ error: 'Failed to add item to favorites' });
+  }
+});
+
+  
+
+// REMOVE ITEM FROM SAVED ITEMS
+exports.removeFromSavedItems = asyncHandler(async (req, res) => {
+  try {
+    const itemId = req.params.itemId; // Extract itemId from request parameters
+    const token = req.headers.token; // Extract token from request headers
+
+    // Check if both item ID and token are provided
+    if (!itemId || !token) {
+      return res.status(400).json({ error: 'Item ID and token are required' });
+    }
+
+    // Verify token
+    const decoded = jwt.verify(token, 'your_secret_key');
+    const userId = decoded.userId;
+
+    // Check if the user exists
+    const user = await UserModel.findById(userId);
+    if (!user) {
+      return res.status(404).json({ error: 'User not found' });
+    }
+
+    // Check if the item exists in user's favorites
+    if (!user.favorites.includes(itemId)) {
+      return res.status(400).json({ error: 'Item not found in favorites' });
+    }
+
+    // Remove the item from user's favorites
+    user.favorites = user.favorites.filter(favoriteId => favoriteId.toString() !== itemId);
+    await user.save();
+
+    res.status(200).json({ message: 'Item removed from favorites successfully' });
+  } catch (error) {
+    console.error('Error removing item from favorites:', error);
+    res.status(500).json({ error: 'Failed to remove item from favorites' });
+  }
+});
+
+
+
+// List all saved items of a user
+// LIST SAVED ITEMS
+exports.listSavedItems = asyncHandler(async (req, res) => {
+  try {
+    const token = req.headers.token; // Extract token from request headers
+
+    // Check if token is provided
+    if (!token) {
+      return res.status(400).json({ error: 'Token is required' });
+    }
+
+    // Verify token
+    const decoded = jwt.verify(token, 'your_secret_key');
+    const userId = decoded.userId;
+
+    // Find user by ID
+    const user = await UserModel.findById(userId).populate('favorites');
+
+    // Check if the user exists
+    if (!user) {
+      return res.status(404).json({ error: 'User not found' });
+    }
+
+    // Check if favorites array is empty
+    if (!user.favorites || user.favorites.length === 0) {
+      return res.status(200).json({ message: 'Saved items list is empty' });
+    }
+
+    // Return the list of saved items
+    res.status(200).json({ data: user.favorites });
+  } catch (error) {
+    console.error('Error listing saved items:', error);
+    res.status(500).json({ error: 'Failed to list saved items' });
+  }
+});
+
+
+
+// recently posted with user token and exclude the user's items........bt-return el accepted items bs
+exports.RecentItems = asyncHandler(async (req, res) => {
+  try {
+    // Extract user ID from token
+    const token = req.headers.token;
+    const decoded = jwt.verify(token, 'your_secret_key');
+    const currentUserId  = decoded.userId;
+
+    // Find items excluding those posted by the current user and only with status "accepted"
+    const items = await ItemModel.find({ user: { $ne: currentUserId }, status: 'accepted' })
+      .sort({ created_at: -1 }); // Sort by created_at field in descending order (most recent to oldest)
+
+    const formattedItems = items.map(item => ({
+      _id: item._id,
+      title: item.title,
+      Description: item.Description,
+      price: item.price,
+      category:item.category?._id, // Retrieve category ID
+      user: item.user,
+      condition: item.condition,
+      slug: item.slug,
+      image: item.image,
+      status: item.status,
+      created_at: item.created_at ? item.created_at.toISOString() : null, // Convert created_at timestamp to ISO string
+      updated_at: item.updated_at ? item.updated_at.toISOString() : null // Convert updated_at timestamp to ISO string
+    }));
+
+    res.status(200).json({
+      success: true,
+      count: formattedItems.length,
+      data: formattedItems
+    });
+  } catch (error) {
+    console.error('Error fetching recent items:', error);
+    res.status(500).json({ error: 'An error occurred while fetching recent items' });
+  }
+});
+
+// ALL USER'S ACCEPTED ITEMS WITH HIS ID 
+exports.GetUserAcceptedItems = asyncHandler(async (req, res) => { 
+  const userId = req.params.userId; // Assuming the user ID is provided in the request parameters 
+
+  try {
+    const items = await ItemModel.find({ 
+        user: userId, 
+        status: 'accepted' // Filter by status 'accepted' 
+    }).sort({ created_at: -1 }); 
+
+    const formattedItems = []; 
+    for (const item of items) { 
+        // Find category name by category ID 
+        const category = await CategoryModel.findById(item.category); 
+        formattedItems.push({ 
+            _id: item._id, 
+            title: item.title, 
+            Description: item.Description, 
+            price: item.price, 
+            category:  category._id, 
+            user: item.user, 
+            condition: item.condition, 
+            slug: item.slug, 
+            image: item.image, 
+            status: item.status, 
+            created_at: item.created_at ? item.created_at.toISOString() : null, // Convert created_at timestamp to ISO string
+            updated_at: item.updated_at ? item.updated_at.toISOString() : null // Convert updated_at timestamp to ISO string 
+        }); 
+    } 
+
+    res.status(200).json({ 
+        success: true, 
+        count: formattedItems.length, 
+        data: formattedItems 
+    }); 
+  } catch (error) {
+    console.error('Error fetching user accepted items:', error);
+    res.status(500).json({ error: 'An error occurred while fetching user accepted items' });
+  }
+});
+
+
+
+//SEARCH BY ITEM NAME
+exports.SearchItemsByTitle = asyncHandler(async (req, res) => {
+  const page = req.query.page * 1 || 1;
+  const limit = req.query.limit * 1||  5;
+  const skip = (page - 1) * limit;
+  let query = {};
+
+  // Check if there's a search query
+  if (req.query.search) {
+      query = { title: { $regex: req.query.search, $options: 'i' } };
+      // 'i' option makes the search case-insensitive
+  }
+
+  // Check if there's a category query
+  if (req.query.category) {
+    query.category = req.query.category; // Filter by category
+  }
+  const items = await ItemModel.find(query)
+      .skip(skip)
+      .limit(limit)
+      .select('-__v') // Exclude the '__v' field from the result
+      .populate('user', 'username email') // Populate the 'user' field with 'username' and 'email'
+      .sort({ createdAt: -1 }); // Sort by creation date in descending order
+
+  res.status(200).json({ TotalItems: items.length, page, data: items });
+});
+
+
+// Filter items by its condition
+exports.filterItemsByCondition = async (req, res) => {
+  const { condition } = req.query;
+
+  if (condition === undefined) {
+      return res.status(400).json({ error: 'Condition query parameter is required' });
+  }
+
+  // Convert the condition query parameter to a boolean
+  let conditionBool;
+  if (condition.toLowerCase() === 'true'  ||condition === '1' || condition.toLowerCase() === 'new') {
+      conditionBool = true;
+  } else if (condition.toLowerCase() === 'false' || condition === '0'  ||condition.toLowerCase() === 'used') {
+      conditionBool = false;
+  } else {
+      return res.status(400).json({ error: 'Invalid condition query parameter' });
+  }
+
+  try {
+      const items = await ItemModel.find({ condition: conditionBool });
+      res.status(200).json(items);
+  } catch (error) {
+      console.error('Error filtering items by condition:', error);
+      res.status(500).json({ error: 'An error occurred while filtering items by condition' });
+  }
+};
+
+// Get all expired items for a user based on their token
+exports.getExpiredItemsForUser = asyncHandler(async (req, res) => {
+  try {
+      // Extract user ID from token
+      const token = req.headers.token;
+      const decoded = jwt.verify(token, 'your_secret_key');
+      const userId = decoded.userId;
+
+      // Find all items associated with the user that have the status set to 'expired'
+      const expiredItems = await ItemModel.find({ user: userId, status: 'expired' });
+
+      res.status(200).json({ success: true, data: expiredItems });
+  } catch (error) {
+      console.log(error);
+      res.status(500).json({ error: error.message });
+  }
+});
+
+// Get all Pending items for a user based on their token
+exports.getPendingItemsForUser = asyncHandler(async (req, res) => {
+  try {
+      // Extract user ID from token
+      const token = req.headers.token;
+      if (!token) {
+          return res.status(401).json({ message: 'Authorization token is missing.' });
+      }
+
+      const decoded = jwt.verify(token, 'your_secret_key'); // Replace 'your_secret_key' with your actual JWT secret
+      const userId = decoded.userId;
+
+      // Find all items associated with the user that have the status set to 'pending'
+      const pendingItems = await itemModel.find({ user: userId, status: 'pending' });
+
+      // Count the pending items
+      const pendingItemsCount = pendingItems.length;
+
+      res.status(200).json({
+          success: true,
+          totalPendingItems: pendingItemsCount,
+          data: pendingItems
+      });
+  } catch (error) {
+      console.log(error);
+      res.status(500).json({ error: error.message });
+  }
+});

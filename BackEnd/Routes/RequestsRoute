@@ -1,0 +1,11 @@
+const express = require('express');
+const router = express.Router();
+const { createExchangeRequest1,listOfferedItems ,respondToExchangeRequest,getAcceptedExchangeRequests,getRejectedExchangeRequests,getPendingExchangeRequests} = require('../Controllers/RequestsController'); // Import as named import
+router.route('/listUserItems').get(listOfferedItems);
+router.route('/addrequest').post(createExchangeRequest1);
+router.route('/respondrequest/:requestId').put(respondToExchangeRequest);
+router.route('/getPendingExchangeRequests').get(getPendingExchangeRequests);
+router.route('/getAcceptedExchangeRequests').get(getAcceptedExchangeRequests);
+router.route('/getRejectedExchangeRequests').get(getRejectedExchangeRequests);
+
+module.exports = router;

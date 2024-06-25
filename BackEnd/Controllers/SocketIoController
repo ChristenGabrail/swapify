@@ -1,0 +1,14 @@
+
+
+const { io } = require('../server'); // Adjust the path as necessary
+
+// Function to emit messages to connected clients
+function emitMessage(message) {
+  if (!io) {
+    console.error('Socket.IO is not initialized');
+    return;
+  }
+  io.emit('chat message', message);
+}
+
+module.exports = { emitMessage };
